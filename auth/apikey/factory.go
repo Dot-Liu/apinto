@@ -1,8 +1,9 @@
 package apikey
 
 import (
-	"github.com/eolinker/eosc"
 	"reflect"
+
+	"github.com/eolinker/eosc"
 )
 
 //Register 注册auth驱动工厂
@@ -11,11 +12,6 @@ func Register() {
 }
 
 type factory struct {
-	profession string
-	name       string
-	label      string
-	desc       string
-	params     map[string]string
 }
 
 //ExtendInfo 返回auth_apikey的驱动工厂信息

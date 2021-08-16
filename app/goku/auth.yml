@@ -1,0 +1,12 @@
+auth:   # 模块名称
+  -
+    name: tester_apikey # 鉴权示例名称
+    driver: apikey # 鉴权驱动名称
+    user:
+      -
+        apikey: der12e3fr   # apikey的值
+        expire: 0 # 过期时间，该字段填写时间戳，当值为0时则表示永不过期
+    -
+        apikey: qesddwt   # apikey的值
+        expire: 1627931017 # 过期时间，该字段填写时间戳，当值为0时则表示永不过期
+    hide_credentials: true # 转发到后端时是否将鉴权字段删除

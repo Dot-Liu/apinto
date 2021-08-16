@@ -71,9 +71,9 @@
       label: eureka服务发现
       desc: consul服务发现
 -
-  name: auth
-  label: 鉴权
-  desc: 鉴权
+  name: auth      # 功能模块名称
+  label: 鉴权     # 标签名
+  desc: 鉴权      # 模块描述
   dependencies: null
   append_label: null
   drivers:
@@ -83,10 +83,10 @@
       label: basic鉴权
       desc: basic鉴权
     -
-      id: eolinker:goku:auth_apikey
-      name: apikey
-      label: apikey鉴权
-      desc: apikey鉴权
+      id: eolinker:goku:auth_apikey   # ID：{group}:{project}:{name}
+      name: apikey                  # 驱动名称
+      label: apikey鉴权             # 驱动标签
+      desc: apikey鉴权             # 驱动描述
     -
       id: eolinker:goku:auth_aksk
       name: aksk

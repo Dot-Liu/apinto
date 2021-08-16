@@ -21,6 +21,10 @@ var supportTypes = []string{
 	"apikeyauth",
 }
 
+type apiKeyUsres struct {
+	users []User
+}
+
 type apikey struct {
 	id             string
 	name           string
