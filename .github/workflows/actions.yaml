@@ -38,11 +38,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
       - name: List files
         run: ls -a dist/ && echo ${{ github.token }}
-      - name: Upload assets
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ github.actor }}
-          path: dist/*.tar.gz
 #       - name: Get release
 #         id: get_release
 #         uses: bruceadams/get-release@v1.2.3
