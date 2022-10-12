@@ -21,11 +21,14 @@ jobs:
           go-version: '1.17.3'
       - name: Checkout  #Checkout代码
         uses: actions/checkout@v3
-#      - name: GoTidy
-#        run: go mod tidy
+      - name: GoTidy
+        run: go mod tidy
       - name: Pack  #运行打包脚本
         run: |
           ./build/cmd/package.sh ${{ steps.vars.outputs.tag }}
+          git config --global user.email ${{ github.email }}
+          git config --global user.name ${{ github.name }}
+          git add . && git commit -m -a
       - name: Create archives on Release   #创建各种系统架构下的二进制包并上传至release assets
         uses: goreleaser/goreleaser-action@v2
         with:
