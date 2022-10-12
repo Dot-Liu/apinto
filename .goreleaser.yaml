@@ -39,3 +39,5 @@ archives:
 release:
   name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
   mode: append
+  extra_files:
+  - glob: dist/*.tar.gz
