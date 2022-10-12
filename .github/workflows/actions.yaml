@@ -26,8 +26,8 @@ jobs:
       - name: Pack  #运行打包脚本
         run: |
           ./build/cmd/package.sh ${{ steps.vars.outputs.tag }}
-          git config --global user.email ${{ github.email }}
-          git config --global user.name ${{ github.name }}
+          git config --global user.email "<>"
+          git config --global user.name ${{ github.actor }}
           git add . && git commit -m -a
       - name: Create archives on Release   #创建各种系统架构下的二进制包并上传至release assets
         uses: goreleaser/goreleaser-action@v2
@@ -35,7 +35,7 @@ jobs:
           version: latest
           args: release -f .goreleaser.yaml --rm-dist
         env:
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          GITHUB_TOKEN: ${{ github.token }}
       - name: Get release
         id: get_release
         uses: bruceadams/get-release@v1.2.3
@@ -44,7 +44,7 @@ jobs:
       - name: UploadAsset    #将打包脚本生成的tar包上传至release
         uses: actions/upload-release-asset@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           upload_url: ${{ steps.get_release.outputs.upload_url }}
           asset_path: ./out/apinto-${{ steps.vars.outputs.tag }}.linux.x64.tar.gz
