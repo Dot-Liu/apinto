@@ -35,7 +35,7 @@ jobs:
 #           version: latest
 #           args: release -f .goreleaser.yaml --rm-dist
           version: latest
-          args: release --rm-dist
+          args: release --snapshot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: List files
