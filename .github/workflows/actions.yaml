@@ -1,9 +1,9 @@
 name: packAndDockerImages
 #触发机制，当main分支有创建tag时
 on:
-  create:
-    tags:
-      - 'v*'
+  release:
+    types:
+    - published
 jobs:
   releasePackage:
     name: releaseOnGithub
