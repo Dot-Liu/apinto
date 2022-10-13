@@ -38,4 +38,5 @@ archives:
         strip_parent: true
 release:
   name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
+  skip_upload: false
   mode: append
