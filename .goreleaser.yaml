@@ -36,6 +36,6 @@ archives:
       - src: 'build/resources/*'
         dst: /
         strip_parent: true
-# release:
-#   name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
-#   mode: append
+release:
+  name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
+  mode: append
