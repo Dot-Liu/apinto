@@ -38,3 +38,4 @@ archives:
         strip_parent: true
 release:
   name_template: "{{ .Tag }}"
+  mode: append
