@@ -37,4 +37,4 @@ archives:
         dst: /
         strip_parent: true
 release:
-  name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
+  name_template: "{{ .Tag }}"
