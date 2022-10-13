@@ -26,9 +26,6 @@ jobs:
       - name: Pack  #运行打包脚本
         run: |
           ./build/cmd/package.sh ${{ steps.vars.outputs.tag }}
-          git config --global user.email "<>"
-          git config --global user.name ${{ github.actor }}
-          git add . && git commit -m -a
       - name: Create archives on Release   #创建各种系统架构下的二进制包并上传至release assets
         uses: goreleaser/goreleaser-action@v3.1.0
         with:
