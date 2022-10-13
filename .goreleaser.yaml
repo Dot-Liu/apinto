@@ -15,10 +15,8 @@ builds:
     goamd64:
       - v1
     targets:
-      - linux_amd64_v1
       - linux_arm64
       - linux_386
-      - darwin_amd64_v1
       - darwin_arm64
     dir: ./app/apinto
     main: .
