@@ -38,8 +38,3 @@ archives:
         strip_parent: true
 release:
   name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
-  github:
-    owner: Dot-Liu
-    name: Dot-Liu/apinto
-  skip_upload: false
-  mode: append
