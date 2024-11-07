@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/eolinker/apinto/drivers"
+
 	"github.com/eolinker/apinto/application"
 	"github.com/eolinker/eosc"
 	"github.com/eolinker/eosc/eocontext"
@@ -13,10 +15,12 @@ import (
 )
 
 type App struct {
-	id string
+	drivers.WorkerBase
+	forceAuth bool
 }
 
 func (a *App) DoFilter(ctx eocontext.EoContext, next eocontext.IChain) (err error) {
+	// 判断是否是websocket
 	return http_service.DoHttpFilter(a, ctx, next)
 }
 
@@ -24,6 +28,23 @@ func (a *App) Destroy() {
 }
 
 func (a *App) DoHttpFilter(ctx http_service.IHttpContext, next eocontext.IChain) error {
+	log.Debug("auth beginning")
+	err := a.auth(ctx)
+	if err != nil {
+		ctx.Response().SetStatus(401, "Unauthorized")
+		ctx.Response().SetBody([]byte(err.Error()))
+		return err
+	}
+	if next != nil {
+		err = next.DoChain(ctx)
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *App) DoWebsocketFilter(ctx http_service.IWebsocketContext, next eocontext.IChain) error {
 	log.Debug("auth beginning")
 	err := a.auth(ctx)
 	if err != nil {
@@ -40,10 +61,30 @@ func (a *App) DoHttpFilter(ctx http_service.IHttpContext, next eocontext.IChain)
 	return nil
 }
 
+func anonymousAppHandler(ctx http_service.IHttpContext) (bool, error) {
+	if app := appManager.AnonymousApp(); app != nil && !app.Disable() {
+		setLabels(ctx, app.Labels())
+		ctx.SetLabel("application_id", app.Id())
+		ctx.SetLabel("application", app.Name())
+		log.Debug("application name is ", app.Name())
+		return true, app.Execute(ctx)
+	}
+	return false, nil
+}
+
 func (a *App) auth(ctx http_service.IHttpContext) error {
+	log.Debug("start auth...")
+	if appManager.Count() < 1 {
+		if a.forceAuth {
+			return fmt.Errorf("no app to auth")
+		}
+		_, err := anonymousAppHandler(ctx)
+		return err
+	}
 	driver := ctx.Request().Header().GetHeader("Authorization-Type")
 	filters := appManager.ListByDriver(driver)
-	if len(filters) < 1 && appManager.Count() > 0 {
+
+	if len(filters) < 1 {
 		filters = appManager.List()
 	}
 	for _, filter := range filters {
@@ -60,24 +101,30 @@ func (a *App) auth(ctx http_service.IHttpContext) error {
 			}
 			setLabels(ctx, user.Labels)
 			setLabels(ctx, user.App.Labels())
-			ctx.SetLabel("application", user.App.Id())
+			ctx.SetLabel("application_id", user.App.Id())
+			ctx.SetLabel("application", user.App.Name())
+			ctx.SetLabel("token", user.Name)
+			log.Debug("application name is ", user.App.Name())
 			if user.HideCredential {
 				application.HideToken(ctx, user.TokenName, user.Position)
 			}
 			return user.App.Execute(ctx)
 		}
 	}
-	return errors.New("invalid user")
+	has, err := anonymousAppHandler(ctx)
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	return errors.New("missing or invalid token")
 }
 
 func setLabels(ctx http_service.IHttpContext, labels map[string]string) {
 	for k, v := range labels {
 		ctx.SetLabel(k, v)
 	}
-}
-
-func (a *App) Id() string {
-	return a.id
 }
 
 func (a *App) Start() error {

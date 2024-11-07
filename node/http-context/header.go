@@ -1,6 +1,7 @@
 package http_context
 
 import (
+	"bytes"
 	"net/http"
 	"strings"
 
@@ -20,25 +21,18 @@ func (h *RequestHeader) RawHeader() string {
 	return h.header.String()
 }
 
-func NewRequestHeader(header *fasthttp.RequestHeader) *RequestHeader {
-	return &RequestHeader{header: header}
+func (h *RequestHeader) reset(header *fasthttp.RequestHeader) {
+	h.header = header
+	h.tmp = nil
 }
 
 func (h *RequestHeader) initHeader() {
 	if h.tmp == nil {
 		h.tmp = make(http.Header)
-		hs := strings.Split(h.header.String(), "\r\n")
-		for _, t := range hs {
-			vs := strings.SplitN(t, ":", 2)
-			if len(vs) < 2 {
-				if vs[0] == "" {
-					continue
-				}
-				h.tmp[vs[0]] = []string{""}
-				continue
-			}
-			h.tmp[vs[0]] = []string{strings.TrimSpace(vs[1])}
-		}
+		h.header.VisitAll(func(key, value []byte) {
+			bytes.SplitN(value, []byte(":"), 2)
+			h.tmp[string(key)] = []string{string(value)}
+		})
 	}
 }
 
@@ -83,13 +77,77 @@ func (h *RequestHeader) SetHost(host string) {
 	h.header.SetHost(host)
 }
 
+type headerActionHandleFunc func(target *ResponseHeader, key string, value ...string)
+
+var (
+	headerActionAdd = func(target *ResponseHeader, key string, value ...string) {
+		target.cache.Add(key, value[0])
+		target.header.Add(key, value[0])
+
+	}
+	headerActionSet = func(target *ResponseHeader, key string, value ...string) {
+		target.cache.Set(key, value[0])
+		target.header.Set(key, value[0])
+	}
+	headerActionDel = func(target *ResponseHeader, key string, value ...string) {
+		target.cache.Del(key)
+		target.header.Del(key)
+	}
+)
+
+type headerAction struct {
+	Action headerActionHandleFunc
+	Key    string
+	Value  string
+}
 type ResponseHeader struct {
 	header *fasthttp.ResponseHeader
-	tmp    http.Header
+
+	cache      http.Header
+	actions    []*headerAction
+	afterProxy bool
 }
 
-func NewResponseHeader(header *fasthttp.ResponseHeader) *ResponseHeader {
-	return &ResponseHeader{header: header}
+func (r *ResponseHeader) reset(header *fasthttp.ResponseHeader) {
+
+	r.header = header
+	r.cache = http.Header{}
+	r.actions = nil
+	r.afterProxy = false
+	//r.refresh()
+}
+func (r *ResponseHeader) refresh() {
+	tmp := make(http.Header)
+	hs := strings.Split(r.header.String(), "\r\n")
+	for i, t := range hs {
+		if i == 0 {
+			continue
+		}
+		if strings.TrimSpace(t) == "" {
+			continue
+		}
+		vs := strings.SplitN(t, ":", 2)
+		if len(vs) < 2 {
+			if vs[0] == "" {
+				continue
+			}
+			tmp[vs[0]] = []string{""}
+			continue
+		}
+		tmp[vs[0]] = []string{strings.TrimSpace(vs[1])}
+	}
+	r.cache = tmp
+	for _, ac := range r.actions {
+		ac.Action(r, ac.Key, ac.Value)
+	}
+	r.afterProxy = true
+	r.actions = nil
+
+}
+func (r *ResponseHeader) Finish() {
+	r.header = nil
+	r.cache = nil
+	r.actions = nil
 }
 
 func (r *ResponseHeader) GetHeader(name string) string {
@@ -97,44 +155,45 @@ func (r *ResponseHeader) GetHeader(name string) string {
 }
 
 func (r *ResponseHeader) Headers() http.Header {
+	return r.cache
 
-	if r.tmp == nil {
-		r.tmp = make(http.Header)
-		hs := strings.Split(r.header.String(), "\r\n")
-		for _, t := range hs {
-			vs := strings.Split(t, ":")
-			if len(vs) < 2 {
-				if vs[0] == "" {
-					continue
-				}
-				r.tmp[vs[0]] = []string{""}
-				continue
-			}
-			r.tmp[vs[0]] = []string{strings.TrimSpace(vs[1])}
-		}
-	}
-	return r.tmp
 }
 
 func (r *ResponseHeader) SetHeader(key, value string) {
-	if r.tmp != nil {
-		r.tmp.Set(key, value)
-	}
+
+	r.cache.Set(key, value)
 	r.header.Set(key, value)
+	if !r.afterProxy {
+		r.actions = append(r.actions, &headerAction{
+			Key:    key,
+			Value:  value,
+			Action: headerActionSet,
+		})
+	}
 }
 
 func (r *ResponseHeader) AddHeader(key, value string) {
-	if r.tmp != nil {
-		r.tmp.Add(key, value)
-	}
+	r.cache.Add(key, value)
 	r.header.Add(key, value)
+	if !r.afterProxy {
+		r.actions = append(r.actions, &headerAction{
+			Key:    key,
+			Value:  value,
+			Action: headerActionAdd,
+		})
+	}
 }
 
 func (r *ResponseHeader) DelHeader(key string) {
-	if r.tmp != nil {
-		r.tmp.Del(key)
-	}
+	r.cache.Del(key)
 	r.header.Del(key)
+	if !r.afterProxy {
+		r.actions = append(r.actions, &headerAction{
+			Key:    key,
+			Action: headerActionDel,
+		})
+	}
+
 }
 
 func (h *RequestHeader) GetCookie(key string) string {

@@ -1,7 +1,7 @@
 package consul
 
 import (
-	"strconv"
+	"fmt"
 	"strings"
 
 	"github.com/eolinker/apinto/discovery"
@@ -9,15 +9,20 @@ import (
 	"github.com/hashicorp/consul/api"
 )
 
+type consulNodeInfo struct {
+	id       string
+	nodeInfo discovery.NodeInfo
+}
+
 func newClients(addrs []string, param map[string]string) *consulClients {
 	clients := make([]*api.Client, 0, len(addrs))
 
 	defaultConfig := api.DefaultConfig()
-	if _, has := param["token"]; has {
-		defaultConfig.Token = param["token"]
+	if v, has := param["token"]; has {
+		defaultConfig.Token = v
 	}
-	if _, has := param["namespace"]; has {
-		defaultConfig.Namespace = param["namespace"]
+	if v, has := param["namespace"]; has {
+		defaultConfig.Namespace = v
 	}
 
 	for _, addr := range addrs {
@@ -43,53 +48,46 @@ func newClients(addrs []string, param map[string]string) *consulClients {
 	return &consulClients{clients: clients}
 }
 
-//getNodes 通过接入地址获取节点信息
-func (c *consulClients) getNodes(service string) (map[string]discovery.INode, error) {
-	nodeSet := make(map[string]discovery.INode)
-	ok := false
+// getNodes 通过接入地址获取节点信息
+func (c *consulClients) getNodes(service string) ([]discovery.NodeInfo, error) {
+	nodeList := make([]discovery.NodeInfo, 0, 2)
+	nodeIDSet := make(map[string]struct{})
 	for _, client := range c.clients {
-		clientNodes := getNodesFromClient(client, service)
-		if len(clientNodes) == 0 {
+		clientNodes, err := getNodesFromClient(client, service)
+		if err != nil {
+			log.Warnf("consul client down for service %s", service)
 			continue
 		}
-		ok = true
-		for _, node := range clientNodes {
-			if _, has := nodeSet[node.ID()]; !has {
-				nodeSet[node.ID()] = node
+		for _, n := range clientNodes {
+			if _, exist := nodeIDSet[n.id]; !exist {
+				nodeList = append(nodeList, n.nodeInfo)
 			}
+			nodeIDSet[n.id] = struct{}{}
 		}
 	}
-	if !ok {
-		return nil, discovery.ErrDiscoveryDown
-	}
-	return nodeSet, nil
+
+	return nodeList, nil
 }
 
-//getNodesFromClient 从连接的客户端返回健康的节点信息
-func getNodesFromClient(client *api.Client, service string) []discovery.INode {
+// getNodesFromClient 从连接的客户端返回健康的节点信息
+func getNodesFromClient(client *api.Client, service string) ([]*consulNodeInfo, error) {
 	queryOptions := &api.QueryOptions{}
 	serviceEntryArr, _, err := client.Health().Service(service, "", true, queryOptions)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
-	nodes := make([]discovery.INode, 0, len(serviceEntryArr))
+	nodes := make([]*consulNodeInfo, 0, len(serviceEntryArr))
 	for _, serviceEntry := range serviceEntryArr {
-		nodeAddr := serviceEntry.Node.Address
-		addrSlide := append(strings.Split(nodeAddr, ":"))
-		ip := addrSlide[0]
-		var port int
-		if len(addrSlide) > 1 {
-			port, err = strconv.Atoi(addrSlide[1])
-			if err != nil {
-				log.Error(err)
-				continue
-			}
-		}
-
-		newNode := discovery.NewNode(serviceEntry.Service.Meta, serviceEntry.Node.ID, ip, port)
-		nodes = append(nodes, newNode)
+		nodes = append(nodes, &consulNodeInfo{
+			id: fmt.Sprintf("%s:%d", serviceEntry.Service.Address, serviceEntry.Service.Port),
+			nodeInfo: discovery.NodeInfo{
+				Ip:     serviceEntry.Service.Address,
+				Port:   serviceEntry.Service.Port,
+				Labels: serviceEntry.Service.Meta,
+			},
+		})
 	}
 
-	return nodes
+	return nodes, nil
 }

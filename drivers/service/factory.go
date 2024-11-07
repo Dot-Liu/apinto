@@ -1,12 +1,12 @@
 package service
 
 import (
-	round_robin "github.com/eolinker/apinto/upstream/round-robin"
-	"github.com/eolinker/eosc/utils/schema"
-	"reflect"
-
+	"github.com/eolinker/apinto/drivers"
 	"github.com/eolinker/apinto/drivers/discovery/static"
+	iphash "github.com/eolinker/apinto/upstream/ip-hash"
+	roundrobin "github.com/eolinker/apinto/upstream/round-robin"
 	"github.com/eolinker/eosc"
+	"github.com/eolinker/eosc/log"
 )
 
 var DriverName = "service_http"
@@ -17,37 +17,19 @@ var (
 	})
 )
 
-//Register 注册service_http驱动工厂
+// Register 注册service_http驱动工厂
 func Register(register eosc.IExtenderDriverRegister) {
-	register.RegisterExtenderDriver(DriverName, NewFactory())
-}
-
-type factory struct {
-}
-
-func (f *factory) Render() interface{} {
-	render, err := schema.Generate(reflect.TypeOf((*Config)(nil)), nil)
+	err := register.RegisterExtenderDriver(DriverName, NewFactory())
 	if err != nil {
-		return nil
+		log.Errorf("register %s %s", DriverName, err)
+		return
+
 	}
-	return render
 }
 
-//NewFactory 创建service_http驱动工厂
+// NewFactory 创建service_http驱动工厂
 func NewFactory() eosc.IExtenderDriverFactory {
-	round_robin.Register()
-	return &factory{}
-}
-
-//Create 创建service_http驱动
-func (f *factory) Create(profession string, name string, label string, desc string, params map[string]interface{}) (eosc.IExtenderDriver, error) {
-
-	return &driver{
-		profession: profession,
-
-		label:      label,
-		desc:       desc,
-		driver:     name,
-		configType: reflect.TypeOf((*Config)(nil)),
-	}, nil
+	roundrobin.Register()
+	iphash.Register()
+	return drivers.NewFactory[Config](Create)
 }

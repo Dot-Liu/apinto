@@ -11,14 +11,20 @@ BasePath=$(pwd) ## 项目根目录
 # 生成版本号
 function genVersion(){
 
-    if [[ "$1" = "" ]]
-    then
-       v=$(git rev-parse --short HEAD)
-       time=$(date "+%Y%m%d%H")
-       echo "$time-$v"
-       exit 0
-    fi
-    echo "$1"
+   # 判断是否传参
+     if [ -n "$1" ]; then
+       echo "$1"
+       return
+     fi
+     # 是否安装了 git
+
+     tag=$(git describe --abbrev=0 --tags)
+
+     if [ $? -ne 0 ]; then
+       tag=$(git rev-parse --short HEAD)
+     fi
+
+     echo "${tag}"
 }
 
 # 构建app
@@ -26,11 +32,29 @@ function buildApp(){
     APP=$1
     VERSION=$2
     OUTPATH="${BasePath}/out/${APP}-${VERSION}"
+    echo "rm -rf ${OUTPATH}"
     rm -rf ${OUTPATH}
+    echo "mkdir -p ${OUTPATH}"
     mkdir -p ${OUTPATH}
-    buildCMD="go build  -o ${OUTPATH}/$APP ${BasePath}/app/$APP"
-    echo "build $APP:${buildCMD}"
-    ${buildCMD}
+    BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    EOSC_VERSION=$(sed -n 's/.*eosc v/v/p' ${BasePath}/go.mod)
+    flags="-X 'github.com/eolinker/apinto/utils/version.Version=${VERSION}'
+           -X 'github.com/eolinker/apinto/utils/version.gitCommit=$(git rev-parse HEAD)'
+           -X 'github.com/eolinker/apinto/utils/version.buildTime=${BUILD_TIME}'
+           -X 'github.com/eolinker/apinto/utils/version.buildUser=gitlab'
+           -X 'github.com/eolinker/apinto/utils/version.goVersion=$(go version)'
+           -X 'github.com/eolinker/apinto/utils/version.eoscVersion=${EOSC_VERSION}'"
+    echo -e "build $APP:go build -ldflags "-w -s $flags" -o ${OUTPATH}/$APP ${BasePath}/app/$APP"
+    ARCH=$3
+    if [[ "$ARCH" == "" ]]
+    then
+    		ARCH="amd64"
+    fi
+    echo "CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} go build -ldflags \"-w -s $flags\" -o ${OUTPATH}/$APP ${BasePath}/app/$APP"
+    CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} go build -ldflags "-w -s $flags" -o ${OUTPATH}/$APP ${BasePath}/app/$APP
+#    echo "build $APP:${buildCMD}"
+
+#    echo `${buildCMD}`
 
     if [[ "$?" != "0" ]]
     then
@@ -44,8 +68,15 @@ function buildApp(){
 function packageApp(){
     APP=$1
     VERSION=$2
-    cd "${BasePath}/out/${APP}-${VERSION}"
-    tar -zcf "${BasePath}/out/${APP}-${VERSION}.linux.x64.tar.gz" --xform 's#^#apinto/#'  *
+    ARCH=$3
+    if [[ "$ARCH" = "" ]]
+    then
+    		ARCH="amd64"
+    fi
+    cp -r "${BasePath}/out/${APP}-${VERSION}" "${BasePath}/out/${APP}"
+		cd "${BasePath}/out"
+    tar -zcf "${BasePath}/out/${APP}_${VERSION}_linux_${ARCH}.tar.gz" ${APP}
+    rm -rf "${BasePath}/out/${APP}"
     cd "${BasePath}"
 }
 

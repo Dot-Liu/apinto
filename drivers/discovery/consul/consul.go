@@ -3,6 +3,8 @@ package consul
 import (
 	"context"
 	"fmt"
+	"github.com/eolinker/apinto/discovery"
+	"github.com/eolinker/apinto/drivers"
 	"sync"
 	"time"
 
@@ -10,22 +12,20 @@ import (
 
 	"github.com/eolinker/eosc"
 	"github.com/eolinker/eosc/log"
-
-	"github.com/eolinker/apinto/discovery"
 )
 
+var _ discovery.IDiscovery = (*consul)(nil)
+
 type consul struct {
-	id         string
-	name       string
+	drivers.WorkerBase
 	clients    *consulClients
-	nodes      discovery.INodesData
-	services   discovery.IServices
+	services   discovery.IAppContainer
 	locker     sync.RWMutex
 	context    context.Context
 	cancelFunc context.CancelFunc
 }
 
-//Start 开始服务发现
+// Start 开始服务发现
 func (c *consul) Start() error {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	c.context = ctx
@@ -42,18 +42,14 @@ func (c *consul) Start() error {
 			case <-ticker.C:
 				{
 					//获取现有服务app的服务名名称列表，并从注册中心获取目标服务名的节点列表
-					keys := c.services.AppKeys()
+					keys := c.services.Keys()
 					for _, serviceName := range keys {
 						nodeSet, err := c.clients.getNodes(serviceName)
 						if err != nil {
-							log.Warnf("consul %s:%s for service %s", c.name, discovery.ErrDiscoveryDown, serviceName)
-							continue
+							log.Warnf("consul %s:%s for service %s", c.Name(), discovery.ErrDiscoveryDown, serviceName)
 						}
 						//更新目标服务的节点列表
-						c.locker.Lock()
-						c.nodes.Set(serviceName, nodeSet)
-						c.locker.Unlock()
-						c.services.Update(serviceName, nodeSet)
+						c.services.Set(serviceName, nodeSet)
 					}
 				}
 
@@ -65,7 +61,7 @@ func (c *consul) Start() error {
 	return nil
 }
 
-//Reset 重置consul实例配置
+// Reset 重置consul实例配置
 func (c *consul) Reset(cfg interface{}, workers map[eosc.RequireId]eosc.IWorker) error {
 	workerConfig, ok := cfg.(*Config)
 	if !ok {
@@ -78,65 +74,39 @@ func (c *consul) Reset(cfg interface{}, workers map[eosc.RequireId]eosc.IWorker)
 	return nil
 }
 
-//Stop 停止服务发现
+// Stop 停止服务发现
 func (c *consul) Stop() error {
 	c.cancelFunc()
 	return nil
 }
 
-//Remove 从所有服务app中移除目标app
-func (c *consul) Remove(id string) error {
+// GetApp 获取服务发现中目标服务的app
+func (c *consul) GetApp(serviceName string) (discovery.IApp, error) {
+	c.locker.RLock()
+	app, has := c.services.GetApp(serviceName)
+	c.locker.RUnlock()
+	if has {
+		return app.Agent(), nil
+	}
+
 	c.locker.Lock()
 	defer c.locker.Unlock()
-	name, count := c.services.Remove(id)
-	if count == 0 {
-		c.nodes.Del(name)
-	}
-	return nil
-}
-
-//GetApp 获取服务发现中目标服务的app
-func (c *consul) GetApp(serviceName string) (discovery.IApp, error) {
-	var err error
-	var has bool
-	c.locker.RLock()
-	nodes, has := c.nodes.Get(serviceName)
-	c.locker.RUnlock()
-	if !has {
-		c.locker.Lock()
-		nodes, has = c.nodes.Get(serviceName)
-		if !has {
-			nodes, err = c.clients.getNodes(serviceName)
-			if err != nil {
-				c.locker.Unlock()
-				return nil, err
-			}
-
-			c.nodes.Set(serviceName, nodes)
-		}
-		c.locker.Unlock()
+	app, has = c.services.GetApp(serviceName)
+	if has {
+		return app.Agent(), nil
 	}
 
-	app, err := c.Create(serviceName, nil, nodes)
+	nodes, err := c.clients.getNodes(serviceName)
 	if err != nil {
-		return nil, err
+		log.Errorf("%s get %s node list error: %v", driverName, serviceName, err)
 	}
-	//将生成的app存入目标服务的app列表
-	c.services.Set(serviceName, app.ID(), app)
-	return app, nil
+	app = c.services.Set(serviceName, nodes)
+
+	return app.Agent(), nil
+
 }
 
-//Create 创建目标服务的app
-func (c *consul) Create(serviceName string, attrs map[string]string, nodes map[string]discovery.INode) (discovery.IApp, error) {
-	return discovery.NewApp(nil, c, attrs, nodes), nil
-}
-
-//Id 返回 worker id
-func (c *consul) Id() string {
-	return c.id
-}
-
-//CheckSkill 检查目标能力是否存在
+// CheckSkill 检查目标能力是否存在
 func (c *consul) CheckSkill(skill string) bool {
 	return discovery.CheckSkill(skill)
 }

@@ -1,7 +1,10 @@
 package access_log
 
 import (
-	http_entry "github.com/eolinker/apinto/http-entry"
+	scope_manager "github.com/eolinker/apinto/scope-manager"
+
+	"github.com/eolinker/apinto/drivers"
+	http_entry "github.com/eolinker/apinto/entries/http-entry"
 	"github.com/eolinker/apinto/output"
 	"github.com/eolinker/eosc"
 	"github.com/eolinker/eosc/eocontext"
@@ -13,9 +16,8 @@ var _ eocontext.IFilter = (*accessLog)(nil)
 var _ http_service.HttpFilter = (*accessLog)(nil)
 
 type accessLog struct {
-	*Driver
-	id     string
-	output []output.IEntryOutput
+	drivers.WorkerBase
+	proxy scope_manager.IProxyOutput[output.IEntryOutput]
 }
 
 func (l *accessLog) DoFilter(ctx eocontext.EoContext, next eocontext.IChain) (err error) {
@@ -28,22 +30,22 @@ func (l *accessLog) DoHttpFilter(ctx http_service.IHttpContext, next eocontext.I
 		log.Error(err)
 	}
 	entry := http_entry.NewEntry(ctx)
-	for _, o := range l.output {
-		err = o.Output(entry)
+
+	outputs := l.proxy.List()
+	for _, v := range outputs {
+
+		err = v.Output(entry)
 		if err != nil {
 			log.Error("access log http-entry error:", err)
 			continue
 		}
 	}
+
 	return nil
 }
 
 func (l *accessLog) Destroy() {
-	l.output = nil
-}
-
-func (l *accessLog) Id() string {
-	return l.id
+	l.proxy = nil
 }
 
 func (l *accessLog) Start() error {
@@ -51,16 +53,22 @@ func (l *accessLog) Start() error {
 }
 
 func (l *accessLog) Reset(conf interface{}, workers map[eosc.RequireId]eosc.IWorker) error {
-	c, err := l.check(conf)
+	c, err := check(conf)
 	if err != nil {
 		return err
 	}
-	list, err := l.getList(c.Output)
+	list, err := getList(c.Output)
 	if err != nil {
 		return err
+	}
+	if len(list) > 0 {
+		proxy := scope_manager.NewProxy(list...)
+
+		l.proxy = proxy
+	} else {
+		l.proxy = scope_manager.Get[output.IEntryOutput]("access_log")
 	}
 
-	l.output = list
 	return nil
 }
 

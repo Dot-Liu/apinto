@@ -25,8 +25,17 @@ type PluginManager struct {
 	name            string
 	extenderDrivers eosc.IExtenderDrivers
 	plugins         Plugins
-	pluginObjs      eosc.IUntyped
+	pluginObjs      eosc.Untyped[string, *PluginObj]
 	workers         eosc.IWorkers
+
+	global eocontext.IChainPro
+}
+
+func (p *PluginManager) Global() eocontext.IChainPro {
+	if p.global == nil {
+		p.global = p.createChain("global", map[string]*plugin.Config{})
+	}
+	return p.global
 }
 
 func (p *PluginManager) Check(cfg interface{}) (profession, name, driver, desc string, err error) {
@@ -82,12 +91,7 @@ func (p *PluginManager) Reset(conf interface{}) error {
 	p.plugins = plugins
 	list := p.pluginObjs.List()
 	// 遍历，全量更新
-	for _, obj := range list {
-		v, ok := obj.(*PluginObj)
-		if !ok {
-
-			continue
-		}
+	for _, v := range list {
 		v.fs = p.createFilters(v.conf)
 	}
 
@@ -119,11 +123,13 @@ func (p *PluginManager) createFilters(conf map[string]*plugin.Config) []eocontex
 			log.Error("plg manager: fail to createFilters filter,error is ", err)
 			continue
 		}
+		log.DebugF("create worker %s@%s start", plg.Name, p.name)
 		worker, err := plg.drive.Create(fmt.Sprintf("%s@%s", plg.Name, p.name), plg.Name, confObj, nil)
 		if err != nil {
 			log.Error("plg manager: fail to createFilters filter,error is ", err)
 			continue
 		}
+		log.DebugF("create worker %s done", worker.Id())
 		fi, ok := worker.(eocontext.IFilter)
 		if !ok {
 			log.Error("extender ", plg.ID, " not plg for http-service.Filter")
@@ -142,10 +148,10 @@ func (p *PluginManager) createChain(id string, conf map[string]*plugin.Config) *
 		obj = NewPluginObj(chain, id, conf)
 		p.pluginObjs.Set(id, obj)
 	} else {
-		obj.(*PluginObj).fs = chain
+		obj.fs = chain
 	}
 	log.Debug("create chain len: ", len(chain))
-	return obj.(*PluginObj)
+	return obj
 }
 
 func (p *PluginManager) check(conf interface{}) (Plugins, error) {
@@ -185,7 +191,7 @@ func NewPluginManager() *PluginManager {
 	pm := &PluginManager{
 		name:       "plugin",
 		plugins:    make(Plugins, 0),
-		pluginObjs: eosc.NewUntyped(),
+		pluginObjs: eosc.BuildUntyped[string, *PluginObj](),
 	}
 	log.Debug("autowired extenderDrivers")
 	bean.Autowired(&pm.extenderDrivers)

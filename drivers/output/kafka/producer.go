@@ -2,11 +2,13 @@ package kafka
 
 import (
 	"context"
+	"encoding/json"
+	"sync"
+
 	"github.com/Shopify/sarama"
 	"github.com/eolinker/eosc"
 	"github.com/eolinker/eosc/formatter"
 	"github.com/eolinker/eosc/log"
-	"sync"
 )
 
 type Producer interface {
@@ -15,13 +17,12 @@ type Producer interface {
 	close()
 }
 type tProducer struct {
-	wg        *sync.WaitGroup
-	input     chan<- *sarama.ProducerMessage
-	producer  sarama.AsyncProducer
-	conf      *ProducerConfig
-	cancel    context.CancelFunc
-	enable    bool
-	locker    *sync.Mutex
+	wg       *sync.WaitGroup
+	input    chan<- *sarama.ProducerMessage
+	producer sarama.AsyncProducer
+	conf     *ProducerConfig
+	cancel   context.CancelFunc
+	//enable    bool
 	formatter eosc.IFormatter
 }
 
@@ -32,12 +33,18 @@ func (o *tProducer) reset(cfg *ProducerConfig) (err error) {
 	if !has {
 		return errorFormatterType
 	}
-	o.formatter, err = factory.Create(cfg.Formatter)
 
 	if o.producer != nil {
 		// 确保关闭
 		o.close()
 	}
+
+	var extendCfg []byte
+	if cfg.Type == "json" {
+		extendCfg, _ = json.Marshal(cfg.ContentResize)
+	}
+	o.formatter, err = factory.Create(cfg.Formatter, extendCfg)
+
 	// 新建生产者
 	o.producer, err = sarama.NewAsyncProducer(cfg.Address, cfg.Conf)
 	if err != nil {
@@ -45,7 +52,9 @@ func (o *tProducer) reset(cfg *ProducerConfig) (err error) {
 	}
 	o.conf = cfg
 	o.input = o.producer.Input()
-	go o.work()
+	ctx, cancel := context.WithCancel(context.Background())
+	o.cancel = cancel
+	go o.work(o.producer, ctx, cfg)
 	return nil
 }
 
@@ -56,27 +65,19 @@ func newTProducer(config *ProducerConfig) *tProducer {
 }
 
 func (o *tProducer) close() {
-	if !o.enable {
-		return
-	}
-	isClose := false
-	o.producer.AsyncClose()
 	if o.cancel != nil {
-		isClose = true
 		o.cancel()
 		o.cancel = nil
 	}
-	if isClose {
-		// 等待消息都读完
-		o.wg.Wait()
-	}
+	o.producer.AsyncClose()
 	o.producer = nil
-	o.enable = false
 	o.formatter = nil
 }
 
 func (o *tProducer) output(entry eosc.IEntry) error {
+	log.DebugF("kafka output begin...")
 	if o.producer == nil && o.formatter == nil {
+		log.DebugF("kafka producer and formatter is nil")
 		return nil
 	}
 
@@ -89,8 +90,9 @@ func (o *tProducer) output(entry eosc.IEntry) error {
 		msg.Partition = o.conf.Partition
 	}
 	if o.conf.PartitionType == "hash" {
-		msg.Key = sarama.StringEncoder(entry.Read(o.conf.PartitionKey))
+		msg.Key = sarama.StringEncoder(eosc.ReadStringFromEntry(entry, o.conf.PartitionKey))
 	}
+	log.DebugF("kafka send addr: %s, topic: %s, data: %s", o.conf.Address, o.conf.Topic, data)
 	o.write(msg)
 
 	return nil
@@ -98,39 +100,37 @@ func (o *tProducer) output(entry eosc.IEntry) error {
 
 func (o *tProducer) write(msg *sarama.ProducerMessage) {
 	// 未开启情况下不给写
-	if !o.enable {
-		return
+	//if !o.enable {
+	//	return
+	//}
+
+	if o.input != nil {
+		o.input <- msg
 	}
-	o.locker.Lock()
-	o.input <- msg
-	o.locker.Unlock()
+
 }
 
-func (o *tProducer) work() {
-	if o.enable {
-		return
-	}
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	o.cancel = cancelFunc
-	// 初始化消息通道
-	if o.wg == nil {
-		o.wg = &sync.WaitGroup{}
-	}
-	o.enable = true
-	o.wg.Add(1)
+func (o *tProducer) work(producer sarama.AsyncProducer, ctx context.Context, cfg *ProducerConfig) {
 	for {
 		select {
 		case <-ctx.Done():
 			// 读完
-			for e := range o.producer.Errors() {
+			for e := range producer.Errors() {
 				log.Warnf("kafka error:%s", e.Error())
 			}
-			o.wg.Done()
 			return
-		case err := <-o.producer.Errors():
+		case err := <-producer.Errors():
+			log.DebugF("receive error.kafka addr: %s,kafka topic: %s,kafka partition: %d", cfg.Address, cfg.Topic, cfg.Partition)
 			if err != nil {
 				log.Warnf("kafka error:%s", err.Error())
 			}
+		case success, ok := <-producer.Successes():
+			log.DebugF("receive success.kafka addr: %s,kafka topic: %s,kafka partition: %d", cfg.Address, cfg.Topic, cfg.Partition)
+			if !ok {
+				log.Errorf("kafka producer closed")
+				return
+			}
+			log.DebugF("kafka success:%s", success)
 		}
 	}
 }

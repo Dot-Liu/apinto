@@ -11,6 +11,9 @@ type URIRequest struct {
 	uri *fasthttp.URI
 }
 
+func (ur *URIRequest) reset(uri *fasthttp.URI) {
+	ur.uri = uri
+}
 func (ur *URIRequest) Path() string {
 	return string(ur.uri.Path())
 }
@@ -66,7 +69,7 @@ func (ur *URIRequest) GetQuery(key string) string {
 }
 
 func (ur *URIRequest) RawQuery() string {
-	return string(ur.uri.QueryString())
+	return string(ur.uri.QueryArgs().String())
 }
 
 func (ur *URIRequest) SetPath(s string) {

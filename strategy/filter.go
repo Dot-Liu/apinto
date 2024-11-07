@@ -8,7 +8,7 @@ import (
 type FilterConfig map[string][]string
 
 func ParseFilter(config FilterConfig) (IFilter, error) {
-	fs := make(Filters, len(config))
+	fs := make(Filters, 0, len(config))
 	for name, patterns := range config {
 
 		if len(patterns) == 0 {
@@ -17,6 +17,14 @@ func ParseFilter(config FilterConfig) (IFilter, error) {
 		cks := make([]checker.Checker, 0, len(patterns))
 
 		for _, p := range patterns {
+			if name == "ip" {
+				c, err := newIPChecker(p)
+				if err != nil {
+					return nil, err
+				}
+				cks = append(cks, c)
+				continue
+			}
 			c, err := checker.Parse(p)
 			if err != nil {
 				return nil, err

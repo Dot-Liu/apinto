@@ -2,19 +2,17 @@ package http_context
 
 import (
 	"bytes"
+	"io"
 	"strings"
 
 	http_context "github.com/eolinker/eosc/eocontext/http-context"
 	"github.com/valyala/fasthttp"
-
-	"io/ioutil"
 
 	"mime"
 	"mime/multipart"
 	"net/url"
 )
 
-const defaultMultipartMemory = 32 << 20 // 32 MB
 var (
 	_ http_context.IBodyDataWriter = (*BodyRequestHandler)(nil)
 )
@@ -30,7 +28,7 @@ const (
 	Html           = "text/html"
 )
 
-//BodyRequestHandler body请求处理器
+// BodyRequestHandler body请求处理器
 type BodyRequestHandler struct {
 	request *fasthttp.Request
 
@@ -53,8 +51,8 @@ func (b *BodyRequestHandler) MultipartForm() (*multipart.Form, error) {
 		Value: form.Value,
 		File:  form.File,
 	}
-	b.resetFile()
-	return form, nil
+
+	return form, b.resetFile()
 }
 func (b *BodyRequestHandler) Files() (map[string][]*multipart.FileHeader, error) {
 	form, err := b.MultipartForm()
@@ -63,12 +61,15 @@ func (b *BodyRequestHandler) Files() (map[string][]*multipart.FileHeader, error)
 	}
 	return form.File, nil
 }
-
+func (b *BodyRequestHandler) reset(request *fasthttp.Request) {
+	b.request = request
+	b.formdata = nil
+}
 func NewBodyRequestHandler(request *fasthttp.Request) *BodyRequestHandler {
 	return &BodyRequestHandler{request: request}
 }
 
-//GetForm 获取表单参数
+// GetForm 获取表单参数
 func (b *BodyRequestHandler) GetForm(key string) string {
 	contentType, _, _ := mime.ParseMediaType(b.ContentType())
 
@@ -94,12 +95,12 @@ func (b *BodyRequestHandler) GetForm(key string) string {
 	return ""
 }
 
-//ContentType 获取contentType
+// ContentType 获取contentType
 func (b *BodyRequestHandler) ContentType() string {
 	return string(b.request.Header.ContentType())
 }
 
-//BodyForm 获取表单参数
+// BodyForm 获取表单参数
 func (b *BodyRequestHandler) BodyForm() (url.Values, error) {
 
 	contentType, _, _ := mime.ParseMediaType(string(b.request.Header.ContentType()))
@@ -118,7 +119,7 @@ func (b *BodyRequestHandler) BodyForm() (url.Values, error) {
 
 }
 
-//RawBody 获取raw数据
+// RawBody 获取raw数据
 func (b *BodyRequestHandler) RawBody() ([]byte, error) {
 	return b.request.Body(), nil
 }
@@ -153,7 +154,7 @@ func (b *BodyRequestHandler) SetToForm(key, value string) error {
 	}
 }
 
-//AddForm 新增表单参数
+// AddForm 新增表单参数
 func (b *BodyRequestHandler) AddForm(key, value string) error {
 
 	contentType, _, _ := mime.ParseMediaType(string(b.request.Header.ContentType()))
@@ -174,7 +175,7 @@ func (b *BodyRequestHandler) AddForm(key, value string) error {
 	}
 }
 
-//AddFile 新增文件参数
+// AddFile 新增文件参数
 func (b *BodyRequestHandler) AddFile(key string, file *multipart.FileHeader) error {
 
 	contentType, _, _ := mime.ParseMediaType(b.ContentType())
@@ -190,7 +191,7 @@ func (b *BodyRequestHandler) AddFile(key string, file *multipart.FileHeader) err
 	return b.resetFile()
 }
 
-//SetFile 设置文件参数
+// SetFile 设置文件参数
 func (b *BodyRequestHandler) SetFile(files map[string][]*multipart.FileHeader) error {
 
 	multipartForm, err := b.MultipartForm()
@@ -211,20 +212,23 @@ func (b *BodyRequestHandler) resetFile() error {
 	body := new(bytes.Buffer)
 	writer := multipart.NewWriter(body)
 
-	for name, fs := range multipartForm.File {
+	for _, fs := range multipartForm.File {
 		for _, f := range fs {
 			fio, err := f.Open()
 			if err != nil {
 				return err
 			}
-
-			part, err := writer.CreateFormFile(name, f.Filename)
+			//part, err := writer.CreateFormFile(name, f.Filename)
+			//if err != nil {
+			//	fio.Close()
+			//	return err
+			//}
+			part, err := writer.CreatePart(f.Header)
 			if err != nil {
-				fio.Close()
 				return err
 			}
 
-			data, err := ioutil.ReadAll(fio)
+			data, err := io.ReadAll(fio)
 			if err != nil {
 				fio.Close()
 				return err
@@ -239,13 +243,16 @@ func (b *BodyRequestHandler) resetFile() error {
 	}
 
 	for key, values := range multipartForm.Value {
-		temp := make(url.Values)
-		temp[key] = values
-		value := temp.Encode()
-		err := writer.WriteField(key, value)
-		if err != nil {
-			return err
+		//temp := make(url.Values)
+		//temp[key] = values
+		//value := temp.Encode()
+		for _, value := range values {
+			err := writer.WriteField(key, value)
+			if err != nil {
+				return err
+			}
 		}
+
 	}
 	err := writer.Close()
 	if err != nil {
@@ -256,7 +263,7 @@ func (b *BodyRequestHandler) resetFile() error {
 	return nil
 }
 
-//SetForm 设置表单参数
+// SetForm 设置表单参数
 func (b *BodyRequestHandler) SetForm(values url.Values) error {
 
 	contentType, _, _ := mime.ParseMediaType(b.ContentType())
@@ -278,10 +285,9 @@ func (b *BodyRequestHandler) SetForm(values url.Values) error {
 	return ErrorNotForm
 }
 
-//SetRaw 设置raw数据
+// SetRaw 设置raw数据
 func (b *BodyRequestHandler) SetRaw(contentType string, body []byte) {
 	b.request.SetBodyRaw(body)
 	b.request.Header.SetContentType(contentType)
-	return
 
 }

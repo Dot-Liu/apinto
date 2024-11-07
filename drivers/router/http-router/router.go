@@ -1,17 +1,25 @@
 package http_router
 
 import (
-	http_complete "github.com/eolinker/apinto/drivers/router/http-router/http-complete"
-	"github.com/eolinker/apinto/drivers/router/http-router/manager"
-	"github.com/eolinker/apinto/plugin"
-	http_router "github.com/eolinker/apinto/router/http-router"
-	"github.com/eolinker/apinto/service"
-	"github.com/eolinker/apinto/template"
+	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
-	"github.com/eolinker/eosc"
+	"github.com/eolinker/apinto/service"
+
+	"github.com/eolinker/apinto/drivers/router/http-router/websocket"
+
 	"github.com/eolinker/eosc/eocontext"
+
+	"github.com/eolinker/apinto/drivers"
+	http_complete "github.com/eolinker/apinto/drivers/router/http-router/http-complete"
+	"github.com/eolinker/apinto/drivers/router/http-router/manager"
+	"github.com/eolinker/apinto/plugin"
+	http_router "github.com/eolinker/apinto/router"
+	"github.com/eolinker/apinto/template"
+	"github.com/eolinker/eosc"
 )
 
 type HttpRouter struct {
@@ -19,7 +27,6 @@ type HttpRouter struct {
 	name          string
 	routerManager manager.IManger
 	pluginManager plugin.IPluginManager
-	handler       *Handler
 }
 
 func (h *HttpRouter) Destroy() error {
@@ -37,33 +44,30 @@ func (h *HttpRouter) Start() error {
 }
 
 func (h *HttpRouter) Reset(conf interface{}, workers map[eosc.RequireId]eosc.IWorker) error {
-	err := h.reset(conf, workers)
+	cfg, err := drivers.Assert[Config](conf)
 	if err != nil {
 		return err
 	}
+	return h.reset(cfg, workers)
 
-	return nil
 }
-func (h *HttpRouter) reset(conf interface{}, workers map[eosc.RequireId]eosc.IWorker) error {
-	cfg, ok := conf.(*Config)
-	if !ok {
-		return eosc.ErrorConfigFieldUnknown
-	}
-	handler := &Handler{
-		routerName:      h.name,
-		serviceName:     strings.TrimSuffix(string(cfg.Service), "@service"),
-		completeHandler: http_complete.NewHttpComplete(cfg.Retry, time.Duration(cfg.TimeOut)*time.Millisecond),
-		finisher:        Finisher{},
-		service:         nil,
-		filters:         nil,
-		disable:         cfg.Disable,
-	}
-	if !cfg.Disable {
+func (h *HttpRouter) reset(cfg *Config, workers map[eosc.RequireId]eosc.IWorker) error {
 
-		serviceWorker, has := workers[cfg.Service]
-		if !has || !serviceWorker.CheckSkill(service.ServiceSkill) {
-			return eosc.ErrorNotGetSillForRequire
-		}
+	methods := cfg.Method
+
+	handler := &httpHandler{
+		routerName:  h.name,
+		routerId:    h.id,
+		serviceName: strings.TrimSuffix(string(cfg.Service), "@service"),
+		finisher:    defaultFinisher,
+		disable:     cfg.Disable,
+		websocket:   cfg.Websocket,
+		retry:       cfg.Retry,
+		labels:      cfg.Labels,
+		timeout:     time.Duration(cfg.TimeOut) * time.Millisecond,
+	}
+
+	if !cfg.Disable {
 
 		if cfg.Plugins == nil {
 			cfg.Plugins = map[string]*plugin.Config{}
@@ -72,18 +76,36 @@ func (h *HttpRouter) reset(conf interface{}, workers map[eosc.RequireId]eosc.IWo
 		if cfg.Template != "" {
 			templateWorker, has := workers[cfg.Template]
 			if !has || !templateWorker.CheckSkill(template.TemplateSkill) {
-				return eosc.ErrorNotGetSillForRequire
+				return fmt.Errorf("target name: %s ,error: %w", cfg.Template, eosc.ErrorNotGetSillForRequire)
 			}
 			tp := templateWorker.(template.ITemplate)
 			plugins = tp.Create(h.id, cfg.Plugins)
 		} else {
 			plugins = h.pluginManager.CreateRequest(h.id, cfg.Plugins)
 		}
-
-		serviceHandler := serviceWorker.(service.IService)
-
-		handler.service = serviceHandler
 		handler.filters = plugins
+
+		if cfg.Service == "" {
+			// 当service未指定，使用默认返回
+			handler.completeHandler = http_complete.NewNoServiceCompleteHandler(cfg.Status, cfg.Header, cfg.Body)
+		} else {
+			s, err := url.PathUnescape(string(cfg.Service))
+			if err != nil {
+				s = string(cfg.Service)
+			}
+			serviceWorker, has := workers[eosc.RequireId(s)]
+			if !has || !serviceWorker.CheckSkill(service.ServiceSkill) {
+				return fmt.Errorf("target name: %s ,error: %w", s, eosc.ErrorNotGetSillForRequire)
+			}
+			serviceHandler := serviceWorker.(service.IService)
+			handler.service = serviceHandler
+			if cfg.Websocket {
+				handler.completeHandler = websocket.NewComplete(cfg.Retry, time.Duration(cfg.TimeOut)*time.Millisecond)
+				methods = []string{http.MethodGet}
+			} else {
+				handler.completeHandler = http_complete.NewHttpComplete()
+			}
+		}
 	}
 
 	appendRule := make([]http_router.AppendRule, 0, len(cfg.Rules))
@@ -94,11 +116,10 @@ func (h *HttpRouter) reset(conf interface{}, workers map[eosc.RequireId]eosc.IWo
 			Pattern: r.Value,
 		})
 	}
-	err := h.routerManager.Set(h.id, cfg.Listen, cfg.Host, cfg.Method, cfg.Path, appendRule, handler)
+	err := h.routerManager.Set(h.id, cfg.Listen, cfg.Protocols, cfg.Host, methods, cfg.Path, appendRule, handler)
 	if err != nil {
 		return err
 	}
-	h.handler = handler
 	return nil
 }
 func (h *HttpRouter) Stop() error {

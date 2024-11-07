@@ -3,9 +3,11 @@ package http_router
 import (
 	"errors"
 	"fmt"
-	"github.com/eolinker/apinto/checker"
 	"sort"
 	"strconv"
+
+	"github.com/eolinker/apinto/checker"
+	"github.com/eolinker/apinto/router"
 )
 
 var ErrorDuplicate = errors.New("duplicate")
@@ -14,13 +16,13 @@ type Root struct {
 	ports map[int]*Ports
 }
 
-func (r *Root) Build() IMatcher {
+func (r *Root) Build() router.IMatcher {
 
-	portsHandlers := make(map[string]IMatcher)
+	portsHandlers := make(map[string]router.IMatcher)
 	for p, c := range r.ports {
 		name := strconv.Itoa(p)
 		if p == 0 {
-			name = All
+			name = router.All
 		}
 		portsHandlers[name] = c.Build()
 	}
@@ -28,11 +30,23 @@ func (r *Root) Build() IMatcher {
 }
 
 type Ports struct {
+	protocols map[string]*Protocols
+}
+
+func (p *Ports) Build() router.IMatcher {
+	protocolMatchers := make(map[string]router.IMatcher)
+	for h, c := range p.protocols {
+		protocolMatchers[h] = c.Build()
+	}
+	return newProtocolMatcher(protocolMatchers)
+}
+
+type Protocols struct {
 	hosts map[string]*Hosts
 }
 
-func (p *Ports) Build() IMatcher {
-	hostMatchers := make(map[string]IMatcher)
+func (p *Protocols) Build() router.IMatcher {
+	hostMatchers := make(map[string]router.IMatcher)
 	for h, c := range p.hosts {
 		hostMatchers[h] = c.Build()
 	}
@@ -43,8 +57,8 @@ type Hosts struct {
 	methods map[string]*Methods
 }
 
-func (h *Hosts) Build() IMatcher {
-	methodMatchers := make(map[string]IMatcher)
+func (h *Hosts) Build() router.IMatcher {
+	methodMatchers := make(map[string]router.IMatcher)
 	for m, c := range h.methods {
 		methodMatchers[m] = c.Build()
 	}
@@ -55,11 +69,11 @@ type Methods struct {
 	paths map[string]*Paths
 }
 
-func (m *Methods) Build() IMatcher {
+func (m *Methods) Build() router.IMatcher {
 
 	checkers := make([]*CheckerHandler, 0, len(m.paths))
-	equals := make(map[string]IMatcher, len(m.paths))
-	var all IMatcher
+	equals := make(map[string]router.IMatcher, len(m.paths))
+	var all router.IMatcher
 	for _, next := range m.paths {
 		matcher := next.Build()
 		if next.checker.CheckType() == checker.CheckTypeEqual {
@@ -84,12 +98,12 @@ type Paths struct {
 	checker  checker.Checker
 }
 
-func (p *Paths) Build() IMatcher {
+func (p *Paths) Build() router.IMatcher {
 	if len(p.handlers) == 0 {
 		return &EmptyMatcher{handler: nil, has: false}
 	}
 
-	if all, has := p.handlers[All]; has {
+	if all, has := p.handlers[router.All]; has {
 		if len(p.handlers) == 1 {
 			return &EmptyMatcher{handler: all.handler, has: true}
 		}
@@ -108,11 +122,11 @@ func (p *Paths) Build() IMatcher {
 
 type Handler struct {
 	id      string
-	handler IRouterHandler
-	rules   []AppendRule
+	handler router.IRouterHandler
+	rules   []router.AppendRule
 }
 
-func (h *Handler) Build() IMatcher {
+func (h *Handler) Build() router.IMatcher {
 	return &AppendMatcher{
 		handler:  h.handler,
 		checkers: Parse(h.rules),
@@ -127,6 +141,12 @@ func NewRoot() *Root {
 
 func NewPorts() *Ports {
 	return &Ports{
+		protocols: map[string]*Protocols{},
+	}
+}
+
+func NewProtocols() *Protocols {
+	return &Protocols{
 		hosts: map[string]*Hosts{},
 	}
 }
@@ -145,10 +165,11 @@ func NewPaths(checker checker.Checker) *Paths {
 	}
 }
 
-func NewHandler(id string, handler IRouterHandler, appends []AppendRule) *Handler {
+func NewHandler(id string, handler router.IRouterHandler, appends []router.AppendRule) *Handler {
 	return &Handler{id: id, handler: handler, rules: appends}
 }
-func (r *Root) Add(id string, handler IRouterHandler, port int, hosts []string, methods []string, path string, append []AppendRule) error {
+
+func (r *Root) Add(id string, handler router.IRouterHandler, port int, protocols []string, hosts []string, methods []string, path string, append []router.AppendRule) error {
 	if r.ports == nil {
 		r.ports = make(map[int]*Ports)
 	}
@@ -157,17 +178,44 @@ func (r *Root) Add(id string, handler IRouterHandler, port int, hosts []string, 
 		pN = NewPorts()
 		r.ports[port] = pN
 	}
-	err := pN.Add(id, handler, hosts, methods, path, append)
+	err := pN.Add(id, handler, protocols, hosts, methods, path, append)
 	if err != nil {
 		return fmt.Errorf("port=%d %w", port, err)
 	}
 	return nil
 }
 
-func (p *Ports) Add(id string, handler IRouterHandler, hosts []string, methods []string, path string, append []AppendRule) error {
+func (p *Ports) Add(id string, handler router.IRouterHandler, protocols []string, hosts []string, methods []string, path string, append []router.AppendRule) error {
+
+	if len(protocols) == 0 {
+		return p.add(id, handler, router.All, hosts, methods, path, append)
+	}
+	for _, protocol := range protocols {
+		err := p.add(id, handler, protocol, hosts, methods, path, append)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *Ports) add(id string, handler router.IRouterHandler, protocol string, hosts []string, methods []string, path string, append []router.AppendRule) error {
+	hN, has := p.protocols[protocol]
+	if !has {
+		hN = NewProtocols()
+		p.protocols[protocol] = hN
+	}
+	err := hN.Add(id, handler, hosts, methods, path, append)
+	if err != nil {
+		return fmt.Errorf("protocol=%s %w", protocol, err)
+	}
+	return nil
+}
+
+func (p *Protocols) Add(id string, handler router.IRouterHandler, hosts []string, methods []string, path string, append []router.AppendRule) error {
 
 	if len(hosts) == 0 {
-		return p.add(id, handler, All, methods, path, append)
+		return p.add(id, handler, router.All, methods, path, append)
 	}
 	for _, host := range hosts {
 		err := p.add(id, handler, host, methods, path, append)
@@ -177,7 +225,8 @@ func (p *Ports) Add(id string, handler IRouterHandler, hosts []string, methods [
 	}
 	return nil
 }
-func (p *Ports) add(id string, handler IRouterHandler, host string, methods []string, path string, append []AppendRule) error {
+
+func (p *Protocols) add(id string, handler router.IRouterHandler, host string, methods []string, path string, append []router.AppendRule) error {
 	hN, has := p.hosts[host]
 	if !has {
 		hN = NewHosts()
@@ -190,7 +239,7 @@ func (p *Ports) add(id string, handler IRouterHandler, host string, methods []st
 	return nil
 }
 
-func (h *Hosts) add(id string, handler IRouterHandler, method string, path string, append []AppendRule) error {
+func (h *Hosts) add(id string, handler router.IRouterHandler, method string, path string, append []router.AppendRule) error {
 	methods, has := h.methods[method]
 	if !has {
 		methods = NewMethods()
@@ -202,9 +251,9 @@ func (h *Hosts) add(id string, handler IRouterHandler, method string, path strin
 	}
 	return nil
 }
-func (h *Hosts) Add(id string, handler IRouterHandler, methods []string, path string, append []AppendRule) error {
+func (h *Hosts) Add(id string, handler router.IRouterHandler, methods []string, path string, append []router.AppendRule) error {
 	if len(methods) == 0 {
-		return h.add(id, handler, All, path, append)
+		return h.add(id, handler, router.All, path, append)
 	}
 	for _, m := range methods {
 		err := h.add(id, handler, m, path, append)
@@ -215,7 +264,7 @@ func (h *Hosts) Add(id string, handler IRouterHandler, methods []string, path st
 	return nil
 }
 
-func (m *Methods) Add(id string, handler IRouterHandler, path string, append []AppendRule) error {
+func (m *Methods) Add(id string, handler router.IRouterHandler, path string, append []router.AppendRule) error {
 	ck, err := checker.Parse(path)
 	if err != nil {
 		return fmt.Errorf("path=%s %w", path, err)
@@ -234,9 +283,9 @@ func (m *Methods) Add(id string, handler IRouterHandler, path string, append []A
 	return nil
 }
 
-func (p *Paths) Add(id string, handler IRouterHandler, append []AppendRule) error {
+func (p *Paths) Add(id string, handler router.IRouterHandler, append []router.AppendRule) error {
 
-	key := Key(append)
+	key := router.Key(append)
 	h, has := p.handlers[key]
 	if has && h.id != id {
 		return fmt.Errorf(" append{%s}:%w for (%s %s) ", key, ErrorDuplicate, h.id, id)
@@ -246,5 +295,5 @@ func (p *Paths) Add(id string, handler IRouterHandler, append []AppendRule) erro
 }
 
 type IBuilder interface {
-	Build() IMatcher
+	Build() router.IMatcher
 }

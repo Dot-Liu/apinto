@@ -1,16 +1,20 @@
 package nsq
 
 import (
+	"reflect"
+
+	scope_manager "github.com/eolinker/apinto/scope-manager"
+
+	"github.com/eolinker/apinto/drivers"
 	"github.com/eolinker/apinto/output"
 	"github.com/eolinker/eosc"
-	"reflect"
 )
 
 var _ output.IEntryOutput = (*NsqOutput)(nil)
 var _ eosc.IWorker = (*NsqOutput)(nil)
 
 type NsqOutput struct {
-	id        string
+	drivers.WorkerBase
 	write     *Writer
 	config    *Config
 	isRunning bool
@@ -19,13 +23,14 @@ type NsqOutput struct {
 func (n *NsqOutput) Output(entry eosc.IEntry) error {
 	w := n.write
 	if w != nil {
-		return w.output(entry)
+		w.output(entry)
+		return nil
 	}
 	return eosc.ErrorWorkerNotRunning
 }
 
 func (n *NsqOutput) Reset(conf interface{}, workers map[eosc.RequireId]eosc.IWorker) error {
-	cfg, err := Check(conf)
+	cfg, err := check(conf)
 	if err != nil {
 		return err
 	}
@@ -45,20 +50,17 @@ func (n *NsqOutput) Reset(conf interface{}, workers map[eosc.RequireId]eosc.IWor
 		}
 		n.write = w
 	}
-
+	scope_manager.Set(n.Id(), n, n.config.Scopes...)
 	return nil
 }
 
 func (n *NsqOutput) Stop() error {
+	scope_manager.Del(n.Id())
 	w := n.write
 	if w != nil {
 		return w.stop()
 	}
 	return nil
-}
-
-func (n *NsqOutput) Id() string {
-	return n.id
 }
 
 func (n *NsqOutput) Start() error {
@@ -72,7 +74,7 @@ func (n *NsqOutput) Start() error {
 		return err
 	}
 	n.write = w
-
+	scope_manager.Set(n.Id(), n, n.config.Scopes...)
 	return nil
 }
 

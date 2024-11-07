@@ -1,53 +1,28 @@
 package static
 
 import (
-	"fmt"
-	"github.com/eolinker/eosc/log"
-	"github.com/eolinker/eosc/utils/config"
-	"reflect"
-
 	"github.com/eolinker/apinto/discovery"
+	"github.com/eolinker/apinto/drivers"
 
 	"github.com/eolinker/eosc"
 )
 
-const (
-	driverName = "static"
-)
-
-//driver 实现github.com/eolinker/eosc.eosc.IProfessionDriver接口
-type driver struct {
-	profession string
-	name       string
-	label      string
-	desc       string
-	configType reflect.Type
-}
-
-//ConfigType 返回驱动配置的反射类型
-func (d *driver) ConfigType() reflect.Type {
-	return d.configType
-}
-
-//Create 创建静态服务发现驱动的实例
-func (d *driver) Create(id, name string, v interface{}, workers map[eosc.RequireId]eosc.IWorker) (eosc.IWorker, error) {
-
-	cfg, ok := v.(*Config)
-	if !ok {
-		val := reflect.ValueOf(v)
-		log.Debug("reflect", val.Kind(), val.Interface())
-		return nil, fmt.Errorf("need %s,now %s", config.TypeNameOf((*Config)(nil)), config.TypeNameOf(v))
-	}
+// Create 创建静态服务发现驱动的实例
+func Create(id, name string, cfg *Config, workers map[eosc.RequireId]eosc.IWorker) (eosc.IWorker, error) {
 
 	s := &static{
-		id:  id,
-		cfg: cfg,
+		WorkerBase: drivers.Worker(id, name),
+		services:   discovery.NewAppContainer(),
+		cfg:        cfg,
 	}
 	return s, nil
 }
 
 func CreateAnonymous(conf *Config) discovery.IDiscovery {
-	s := &static{}
-
+	s := &static{
+		cfg:      conf,
+		services: discovery.NewAppContainer(),
+	}
+	_ = s.Start()
 	return s
 }

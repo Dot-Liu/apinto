@@ -1,7 +1,9 @@
 package httpoutput
 
 import (
+	"github.com/eolinker/apinto/drivers"
 	"github.com/eolinker/apinto/output"
+	scope_manager "github.com/eolinker/apinto/scope-manager"
 	"github.com/eolinker/eosc"
 )
 
@@ -9,7 +11,7 @@ var _ output.IEntryOutput = (*HttpOutput)(nil)
 var _ eosc.IWorker = (*HttpOutput)(nil)
 
 type HttpOutput struct {
-	id      string
+	drivers.WorkerBase
 	config  *Config
 	handler *Handler
 	running bool
@@ -24,10 +26,6 @@ func (h *HttpOutput) Output(entry eosc.IEntry) error {
 	return eosc.ErrorWorkerNotRunning
 }
 
-func (h *HttpOutput) Id() string {
-	return h.id
-}
-
 func (h *HttpOutput) Start() error {
 	hd := h.handler
 	if hd != nil {
@@ -40,39 +38,41 @@ func (h *HttpOutput) Start() error {
 	}
 
 	h.handler = handler
+	scope_manager.Set(h.Id(), h, h.config.Scopes...)
 	return nil
 }
 
 func (h *HttpOutput) Reset(conf interface{}, workers map[eosc.RequireId]eosc.IWorker) (err error) {
 
-	config, err := Check(conf)
+	config, err := check(conf)
 
 	if err != nil {
 		return err
 	}
-	if h.config != nil && !h.config.isConfUpdate(config) {
-		return nil
-	}
+	//if h.config != nil && !h.config.isConfUpdate(config) {
+	//	return nil
+	//}
 	h.config = config
 
 	if h.running {
-		hd := h.handler
-		if hd != nil {
-			return hd.reset(config)
+		if h.handler == nil {
+			h.handler, err = NewHandler(h.config)
+			if err != nil {
+				return err
+			}
 		}
 
-		handler, err := NewHandler(h.config)
+		err = h.handler.reset(config)
 		if err != nil {
 			return err
 		}
-
-		h.handler = handler
 	}
-
+	scope_manager.Set(h.Id(), h, h.config.Scopes...)
 	return nil
 }
 
 func (h *HttpOutput) Stop() error {
+	scope_manager.Del(h.Id())
 	hd := h.handler
 	if hd != nil {
 		h.handler = nil

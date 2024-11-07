@@ -1,17 +1,20 @@
 package syslog
 
 import (
+	"reflect"
+
+	scope_manager "github.com/eolinker/apinto/scope-manager"
+
+	"github.com/eolinker/apinto/drivers"
 	"github.com/eolinker/apinto/output"
 	"github.com/eolinker/eosc"
-	"reflect"
 )
 
 var _ output.IEntryOutput = (*Output)(nil)
 var _ eosc.IWorker = (*Output)(nil)
 
 type Output struct {
-	id   string
-	name string
+	drivers.WorkerBase
 
 	config  *Config
 	writer  *SysWriter
@@ -26,11 +29,8 @@ func (s *Output) Output(entry eosc.IEntry) error {
 	return eosc.ErrorWorkerNotRunning
 }
 
-func (s *Output) Id() string {
-	return s.id
-}
-
 func (s *Output) Start() error {
+	scope_manager.Del(s.Id())
 	s.running = true
 	w := s.writer
 	if w == nil {
@@ -40,6 +40,7 @@ func (s *Output) Start() error {
 		}
 		s.writer = writer
 	}
+	scope_manager.Set(s.Id(), s, s.config.Scopes...)
 	return nil
 }
 
@@ -55,21 +56,25 @@ func (s *Output) Reset(conf interface{}, workers map[eosc.RequireId]eosc.IWorker
 	s.config = cfg
 
 	if s.running {
-		w := s.writer
-		if w != nil {
-			return w.reset(cfg)
+		if s.writer == nil {
+			s.writer, err = CreateTransporter(s.config)
+			if err != nil {
+				return err
+			}
 		}
-		writer, err := CreateTransporter(s.config)
+
+		err = s.writer.reset(cfg)
 		if err != nil {
 			return err
 		}
-		s.writer = writer
 	}
+	scope_manager.Set(s.Id(), s, s.config.Scopes...)
 	return nil
 }
 
 func (s *Output) Stop() error {
 	w := s.writer
+	scope_manager.Del(s.Id())
 	if w != nil {
 		return w.stop()
 	}

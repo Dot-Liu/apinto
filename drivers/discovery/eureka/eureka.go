@@ -3,9 +3,11 @@ package eureka
 import (
 	"context"
 	"fmt"
-	"github.com/eolinker/eosc/utils/config"
 	"sync"
 	"time"
+
+	"github.com/eolinker/apinto/drivers"
+	"github.com/eolinker/eosc/utils/config"
 
 	"github.com/eolinker/eosc/log"
 
@@ -13,61 +15,44 @@ import (
 	"github.com/eolinker/eosc"
 )
 
+var _ discovery.IDiscovery = (*eureka)(nil)
+
 type eureka struct {
-	id         string
-	name       string
+	drivers.WorkerBase
 	client     *client
-	nodes      discovery.INodesData
-	services   discovery.IServices
+	services   discovery.IAppContainer
 	context    context.Context
 	cancelFunc context.CancelFunc
 	locker     sync.RWMutex
 }
 
-//GetApp 获取服务发现中目标服务的app
+// GetApp 获取服务发现中目标服务的app
 func (e *eureka) GetApp(serviceName string) (discovery.IApp, error) {
 	e.locker.RLock()
-	nodes, ok := e.nodes.Get(serviceName)
+	app, ok := e.services.GetApp(serviceName)
 	e.locker.RUnlock()
-	if !ok {
-		e.locker.Lock()
-		nodes, ok = e.nodes.Get(serviceName)
-		if !ok {
-			// 开始重新获取
-			ns, err := e.client.GetNodeList(serviceName)
-			if err != nil {
-				e.locker.Unlock()
-				return nil, err
-			}
-			e.nodes.Set(serviceName, ns)
-			nodes = ns
-		}
-		e.locker.Unlock()
+	if ok {
+		return app.Agent(), nil
 	}
-	app := discovery.NewApp(nil, e, nil, nodes)
-	//将生成的app存入目标服务的app列表
-	e.services.Set(serviceName, app.ID(), app)
-	return app, nil
-}
 
-//Remove 从所有服务app中移除目标app
-func (e *eureka) Remove(id string) error {
 	e.locker.Lock()
-	defer e.locker.Unlock()
-	name, count := e.services.Remove(id)
-	// 对应services没有app了，移除所有节点
-	if count == 0 {
-		e.nodes.Del(name)
+	app, ok = e.services.GetApp(serviceName)
+	if ok {
+		return app.Agent(), nil
 	}
-	return nil
+
+	// 开始重新获取
+	ns, err := e.client.GetNodeList(serviceName)
+	if err != nil {
+		log.Errorf("%s get %s node list error: %v", driverName, serviceName, err)
+	}
+	app = e.services.Set(serviceName, ns)
+	e.locker.Unlock()
+
+	return app.Agent(), nil
 }
 
-//Id 返回 worker id
-func (e *eureka) Id() string {
-	return e.id
-}
-
-//Start 开始服务发现
+// Start 开始服务发现
 func (e *eureka) Start() error {
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	e.context = ctx
@@ -83,18 +68,14 @@ func (e *eureka) Start() error {
 			case <-ticker.C:
 				{
 					//获取现有服务app的服务名名称列表，并从注册中心获取目标服务名的节点列表
-					keys := e.services.AppKeys()
+					keys := e.services.Keys()
 					for _, serviceName := range keys {
 						res, err := e.client.GetNodeList(serviceName)
 						if err != nil {
-							log.Warnf("eureka %s:%w for service %s", e.name, discovery.ErrDiscoveryDown, serviceName)
-							continue
+							log.Warnf("eureka %s:%w for service %s", e.Name(), discovery.ErrDiscoveryDown, serviceName)
 						}
 						//更新目标服务的节点列表
-						e.locker.Lock()
-						e.nodes.Set(serviceName, res)
-						e.locker.Unlock()
-						e.services.Update(serviceName, res)
+						e.services.Set(serviceName, res)
 					}
 				}
 			}
@@ -104,7 +85,7 @@ func (e *eureka) Start() error {
 	return nil
 }
 
-//Reset 重置eureka实例配置
+// Reset 重置eureka实例配置
 func (e *eureka) Reset(conf interface{}, workers map[eosc.RequireId]eosc.IWorker) error {
 	cfg, ok := conf.(*Config)
 	if !ok {
@@ -114,13 +95,13 @@ func (e *eureka) Reset(conf interface{}, workers map[eosc.RequireId]eosc.IWorker
 	return nil
 }
 
-//Stop 停止服务发现
+// Stop 停止服务发现
 func (e *eureka) Stop() error {
 	e.cancelFunc()
 	return nil
 }
 
-//CheckSkill 检查目标能力是否存在
+// CheckSkill 检查目标能力是否存在
 func (e *eureka) CheckSkill(skill string) bool {
 	return discovery.CheckSkill(skill)
 }

@@ -1,20 +1,33 @@
 package fileoutput
 
 import (
+	"fmt"
+	scope_manager "github.com/eolinker/apinto/scope-manager"
+	"github.com/eolinker/eosc/router"
+	"net/http"
+	"reflect"
+
+	"github.com/eolinker/apinto/drivers"
 	"github.com/eolinker/apinto/output"
 	"github.com/eolinker/eosc"
-	"reflect"
 )
 
 var _ output.IEntryOutput = (*FileOutput)(nil)
 var _ eosc.IWorker = (*FileOutput)(nil)
 
 type FileOutput struct {
-	id        string
-	name      string
+	drivers.WorkerBase
 	config    *Config
 	writer    *FileWriter
 	isRunning bool
+}
+
+func (a *FileOutput) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if a.writer == nil || a.writer.fileHandler == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	a.writer.fileHandler.ServeHTTP(w, r)
 }
 
 func (a *FileOutput) Output(entry eosc.IEntry) error {
@@ -27,7 +40,7 @@ func (a *FileOutput) Output(entry eosc.IEntry) error {
 
 func (a *FileOutput) Reset(conf interface{}, workers map[eosc.RequireId]eosc.IWorker) (err error) {
 
-	cfg, err := Check(conf)
+	cfg, err := check(conf)
 
 	if err != nil {
 		return err
@@ -43,19 +56,22 @@ func (a *FileOutput) Reset(conf interface{}, workers map[eosc.RequireId]eosc.IWo
 			w = new(FileWriter)
 		}
 
-		err = w.reset(cfg)
+		err = w.reset(cfg, a.Name())
 		if err != nil {
 			return err
 		}
 		a.writer = w
-
+		scope_manager.Set(a.Id(), a, cfg.Scopes...)
 	}
 
 	return nil
 }
 
 func (a *FileOutput) Stop() error {
+	scope_manager.Del(a.Id())
+	router.DeletePath(a.Id())
 	a.isRunning = false
+
 	w := a.writer
 	if w != nil {
 		err := w.stop()
@@ -65,22 +81,24 @@ func (a *FileOutput) Stop() error {
 	return nil
 }
 
-func (a *FileOutput) Id() string {
-	return a.id
-}
-
 func (a *FileOutput) Start() error {
 	a.isRunning = true
 	w := a.writer
 	if w == nil {
 		w = new(FileWriter)
 	}
-
-	err := w.reset(a.config)
+	err := router.SetPath(a.Id(), fmt.Sprintf("/log/access/%s/", a.Name()), a)
 	if err != nil {
 		return err
 	}
+	err = w.reset(a.config, a.Name())
+	if err != nil {
+		return err
+	}
+
 	a.writer = w
+	scope_manager.Set(a.Id(), a, a.config.Scopes...)
+
 	return nil
 
 }
