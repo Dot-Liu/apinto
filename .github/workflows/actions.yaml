@@ -49,6 +49,8 @@ jobs:
           go mod tidy
       - name: Pack  #运行打包脚本并且将生成的tar包复制至Dockerfile所在目录
         run: |
+          echo "GOROOT=$GOROOT"
+          echo "GOPATH=$GOPATH"
           ./build/cmd/package.sh ${{ steps.vars.outputs.tag }}
           cp ./out/apinto_${{ steps.vars.outputs.tag }}_linux_amd64.tar.gz ./build/resources/apinto.linux.x64.tar.gz
       - name: Login Docker   #登录docker
